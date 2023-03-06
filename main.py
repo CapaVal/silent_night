@@ -147,7 +147,6 @@ def smooth_average(data, nb_sample_to_smooth):
     smoothed_arr = []
 
     for idx, new_data in enumerate(data):
-        print(idx)
         if idx <= half_nb_sample:
             smoothed_value += data[half_nb_sample + idx]
             nb_used_sample += 1
