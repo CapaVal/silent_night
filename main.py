@@ -6,12 +6,15 @@ import numpy as np
 import scipy
 import matplotlib.ticker as ticker
 import time
+import tkinter
+from tkinter import filedialog
+import os
 
 def export_file(input_file_name):
     # Deal with m4a file : convert to wav
     wav_filename = ""
     if input_file_name[-4:] == ".m4a":
-        AudioSegment.converter = 'C:\\Users\\Valentin\\Desktop\\ffmpeg-5.1.2-essentials_build\\bin\\ffmpeg'
+        AudioSegment.converter = 'ffmpeg'
         track = AudioSegment.from_file(input_file_name, format='m4a')
         wav_filename = input_file_name[:-4] + ".wav"
         track.export(wav_filename, format='wav')  # convert .m4a to .wav
@@ -50,13 +53,12 @@ def get_closest_value_index(freq, sought_value):
 
     return closest_index
 
-def process_sound(wav_file_name, offset, duration, sampling_period):
+def process_sound(wav_file_name, offset, duration, sampling_period, amplitude_threshold):
     raw_wav_bytes, sr = librosa.load(wav_file_name, offset=offset, duration=duration, sr=None)
     raw_wav = list(raw_wav_bytes)
     nb_pts = len(raw_wav)
     time_vector = np.arange(offset, offset + nb_pts / sr, 1 / sr)
 
-    sampling_period = 0.2  # The audio time we will use to analyse if there is teeth grinding
     nb_pts_sample = int(sampling_period * sr)
     wav_split_arr = split_raw_wav(raw_wav, nb_pts_sample)
     time_split_arr = split_raw_wav(time_vector, nb_pts_sample)
@@ -84,12 +86,12 @@ def process_sound(wav_file_name, offset, duration, sampling_period):
         index_max = np.argmax(yf)
         amplitude = yf[index_max]
 
-        for raw_point in windowed_signal[0 : int(len(windowed_signal) / 2)]: # Reduce the average on the first decile of the signal to accelerate processing
+        for raw_point in windowed_signal[0 : int(len(windowed_signal) / 2)]: # Reduce the average on the first half
             average_power += abs(raw_point)
         average_power /= (len(windowed_signal) / 2)
         average_power *= 1000  # Arbitrary normalization
 
-        if amplitude > 15:
+        if amplitude > amplitude_threshold:
             res_freq = freq_fft[index_max]
         else:
             res_freq = 0
@@ -117,9 +119,9 @@ def process_sound(wav_file_name, offset, duration, sampling_period):
 
     return window_time, amplitude_array, res_freq_array, power_array
 
-def concatenate_window_data(wav_file_name, window_size, sampling_period):
+def concatenate_window_data(wav_file_name, window_size, sampling_period, amplitude_threshold):
     total_duration = librosa.get_duration(filename=wav_file_name)
-    offset_array = np.arange(0, total_duration - window_size, window_size)
+    offset_array = np.arange(0, total_duration, window_size)
 
     total_window_time_arr = []
     total_amplitude_arr = []
@@ -127,7 +129,7 @@ def concatenate_window_data(wav_file_name, window_size, sampling_period):
     total_power_arr = []
 
     for offset in offset_array:
-        window_time_arr, amplitude_arr, res_freq_arr, power_array = process_sound(wav_file_name, offset, window_size, sampling_period)
+        window_time_arr, amplitude_arr, res_freq_arr, power_array = process_sound(wav_file_name, offset, window_size, sampling_period, amplitude_threshold)
         total_window_time_arr +=  window_time_arr
         total_amplitude_arr += amplitude_arr
         total_res_freq_arr += res_freq_arr
@@ -137,10 +139,15 @@ def concatenate_window_data(wav_file_name, window_size, sampling_period):
 def smooth_average(data, nb_sample_to_smooth):
     half_nb_sample = int(nb_sample_to_smooth / 2)
     smoothed_value = sum(data[0:half_nb_sample - 1])
+
+    if len(data) / 2 <= nb_sample_to_smooth: # Make sure the smoothing is meaningful
+        print("Irrelevant smoothing, reduce g_time_average_smoothing_sec")
+        exit()
     nb_used_sample = half_nb_sample - 1
     smoothed_arr = []
 
     for idx, new_data in enumerate(data):
+        print(idx)
         if idx <= half_nb_sample:
             smoothed_value += data[half_nb_sample + idx]
             nb_used_sample += 1
@@ -156,25 +163,32 @@ def smooth_average(data, nb_sample_to_smooth):
     return smoothed_arr
 
 if __name__ == "__main__":
-    g_input_file_name = 'C:\\Users\\Valentin\\Desktop\\Sounds\\Nouvel_enregistrement_28.wav'
+    ### Parameters to configure the run ###
+    g_window_size_sec = 20 # Time splitting of the wav file (in seconds). It reduces the RAM usage.
+    g_time_average_smoothing_sec = 10 # Smoothing of the amplitude to help sound detection (in second)
+    g_sampling_period = 0.2 # Sampling period used to detect amplitude + resonance frequency (in second)
+    g_amplitude_threshold = 15  # Signal amplitude threshold to say whether the resonance frequency is relevant or not.
+    g_time_to_display = [] # To display raw signal + fft at precise time location, fill the desired time in this array
+    ### End of parameter section ###
+
+    path = os.getcwd()
+    tkinter.Tk().withdraw()
+    g_input_file_name = filedialog.askopenfilename(initialdir=path, title="Select a File")
+
     g_wav_file_name = export_file(g_input_file_name)
     g_sample_rate = librosa.get_samplerate(g_wav_file_name)
-
-    g_window_size_sec = 30 # Time splitting of the wav file in seconds
-    g_time_average_smoothing = 10 # Smoothing of the amplitude to help sound detection
-    g_sampling_period = 0.2
 
     # Set a hh:mm:ss format for the x-axis
     g_fmt = ticker.FuncFormatter(lambda x, pos: time.strftime('%H:%M:%S', time.gmtime(x)))
     # Set a hh:mm:ss:ms format for the x-axis
     g_fmt_ms = ticker.FuncFormatter(lambda x, pos: datetime.utcfromtimestamp(x).strftime('%T.%f')[:-3])
 
-    g_time_to_display = [3600, 5 * 3600 + 34 * 60 + 30, 5 * 3600 + 35 * 60 + 30]
+    window_time, amplitude, res_freq_array, g_power_array = concatenate_window_data(g_wav_file_name, g_window_size_sec, g_sampling_period, g_amplitude_threshold)
 
-    window_time, amplitude, res_freq_array, g_power_array = concatenate_window_data(g_wav_file_name, g_window_size_sec, g_sampling_period)
+    window_smoothing_size = g_time_average_smoothing_sec / g_sampling_period # Nb points to apply smoothing
+    smoothed_pwr_average = smooth_average(g_power_array, window_smoothing_size)
 
-    window_size = g_window_size_sec / g_sampling_period # Nb points to apply smoothing
-    smoothed_pwr_averaage = smooth_average(g_power_array, window_size)
+    ### Plot section ###
     plt.figure()
     ax = plt.axes()
     ax.plot(window_time, amplitude)
@@ -201,11 +215,12 @@ if __name__ == "__main__":
 
     plt.figure()
     ax = plt.axes()
-    ax.plot(window_time, smoothed_pwr_averaage)
+    ax.plot(window_time, smoothed_pwr_average)
     ax.set_xlabel("Time in s")
     ax.set_title(" averaged smoothed power over time")
     ax.set_ylabel("Power (a.u)")
     ax.xaxis.set_major_formatter(g_fmt)
 
     plt.show()
+    ### End of plot section ###
 
