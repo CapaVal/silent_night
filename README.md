@@ -1,2 +1,5 @@
-# silent_night
-Record your night with a phone, get your phonic highlights in the morning.
+# Les oreilles ont des dents
+
+
+
+The program was written by Valentin Issindou
