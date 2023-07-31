@@ -10,6 +10,7 @@ import tkinter
 from tkinter import filedialog
 import os
 
+# Convert a file name into a waveform
 def export_file(input_file_name):
     # Deal with m4a file : convert to wav
     wav_filename = ""
@@ -28,7 +29,6 @@ def export_file(input_file_name):
     return wav_filename
 
 #  This function take a 1-D array, and convert it in 2D array with the first dimension set as nb_pts_sample
-
 def split_raw_wav(raw_wav, nb_pts_sample):
     output_array = []
     nb_pts = len(raw_wav)
@@ -53,6 +53,7 @@ def get_closest_value_index(freq, sought_value):
 
     return closest_index
 
+# Analyze the raw waveform and returns key data such as resonnance freq (for each time slot), sound amplitude and power
 def process_sound(wav_file_name, offset, duration, sampling_period, amplitude_threshold):
     raw_wav_bytes, sr = librosa.load(wav_file_name, offset=offset, duration=duration, sr=None)
     raw_wav = list(raw_wav_bytes)
@@ -68,8 +69,8 @@ def process_sound(wav_file_name, offset, duration, sampling_period, amplitude_th
         window_time.append(time_split_arr[window_idx][0])
 
     freq_fft = scipy.fftpack.fftfreq(len(wav_split_arr[0]), 1 / sr)
-    min_freq = 20
-    max_freq = 20000
+    min_freq = 20       # Relevant frequency for audio signal is included between 20 and 20kHz
+    max_freq = 20000    # Relevant frequency for audio signal is included between 20 and 20kHz
 
     min_idx = get_closest_value_index(freq_fft, min_freq)
     max_idx = get_closest_value_index(freq_fft, max_freq)
@@ -86,7 +87,7 @@ def process_sound(wav_file_name, offset, duration, sampling_period, amplitude_th
         index_max = np.argmax(yf)
         amplitude = yf[index_max]
 
-        for raw_point in windowed_signal[0 : int(len(windowed_signal) / 2)]: # Reduce the average on the first half
+        for raw_point in windowed_signal[0 : int(len(windowed_signal) / 2)]: # Reduce the average on the first half to increase processing without significant loss on output value
             average_power += abs(raw_point)
         average_power /= (len(windowed_signal) / 2)
         average_power *= 1000  # Arbitrary normalization
@@ -119,23 +120,26 @@ def process_sound(wav_file_name, offset, duration, sampling_period, amplitude_th
 
     return window_time, amplitude_array, res_freq_array, power_array
 
+# Cut the wav file in piece, process each piece and re-assemble every processed pieces (to save RAM ressource)
 def concatenate_window_data(wav_file_name, window_size, sampling_period, amplitude_threshold):
     total_duration = librosa.get_duration(filename=wav_file_name)
-    offset_array = np.arange(0, total_duration, window_size)
+    offset_array = np.arange(0, total_duration, window_size) # Create an array filled with every offset that are going to be used
 
     total_window_time_arr = []
     total_amplitude_arr = []
     total_res_freq_arr = []
     total_power_arr = []
 
+# For each section, process the signal and fill the global indicators
     for offset in offset_array:
         window_time_arr, amplitude_arr, res_freq_arr, power_array = process_sound(wav_file_name, offset, window_size, sampling_period, amplitude_threshold)
-        total_window_time_arr +=  window_time_arr
-        total_amplitude_arr += amplitude_arr
-        total_res_freq_arr += res_freq_arr
-        total_power_arr += power_array
+        total_window_time_arr +=  window_time_arr  # Array concatenation
+        total_amplitude_arr += amplitude_arr       # Array concatenation
+        total_res_freq_arr += res_freq_arr         # Array concatenation
+        total_power_arr += power_array             # Array concatenation
     return total_window_time_arr, total_amplitude_arr, total_res_freq_arr, total_power_arr
 
+# Make a smoothing of the signal
 def smooth_average(data, nb_sample_to_smooth):
     half_nb_sample = int(nb_sample_to_smooth / 2)
     smoothed_value = sum(data[0:half_nb_sample - 1])
@@ -161,6 +165,7 @@ def smooth_average(data, nb_sample_to_smooth):
         smoothed_arr.append(smoothed_arr_normalized)
     return smoothed_arr
 
+# Program starts here
 if __name__ == "__main__":
     ### Parameters to configure the run ###
     g_window_size_sec = 20 # Time splitting of the wav file (in seconds). It reduces the RAM usage.
@@ -182,12 +187,15 @@ if __name__ == "__main__":
     # Set a hh:mm:ss:ms format for the x-axis
     g_fmt_ms = ticker.FuncFormatter(lambda x, pos: datetime.utcfromtimestamp(x).strftime('%T.%f')[:-3])
 
+    # Concatenate
     window_time, amplitude, res_freq_array, g_power_array = concatenate_window_data(g_wav_file_name, g_window_size_sec, g_sampling_period, g_amplitude_threshold)
 
     window_smoothing_size = g_time_average_smoothing_sec / g_sampling_period # Nb points to apply smoothing
     smoothed_pwr_average = smooth_average(g_power_array, window_smoothing_size)
 
     ### Plot section ###
+
+    # Figure "Amplitude vs time"
     plt.figure()
     ax = plt.axes()
     ax.plot(window_time, amplitude)
@@ -196,6 +204,7 @@ if __name__ == "__main__":
     ax.set_label("Peak ampltitude (a.u.)")
     ax.xaxis.set_major_formatter(g_fmt)
 
+    # Figure "resonnance frequency over time"
     plt.figure()
     ax = plt.axes()
     ax.plot(window_time, res_freq_array)
@@ -204,6 +213,7 @@ if __name__ == "__main__":
     ax.set_ylabel("Fundamental freq (Hz)")
     ax.xaxis.set_major_formatter(g_fmt)
 
+    # Figure "power over time"
     plt.figure()
     ax = plt.axes()
     ax.plot(window_time, g_power_array)
@@ -212,6 +222,7 @@ if __name__ == "__main__":
     ax.set_ylabel("Power (a.u)")
     ax.xaxis.set_major_formatter(g_fmt)
 
+    # Figure averaged smoothed power over time
     plt.figure()
     ax = plt.axes()
     ax.plot(window_time, smoothed_pwr_average)
